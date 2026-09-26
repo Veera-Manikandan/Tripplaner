@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+
+<!--
+
+  Trip Planner — single-file build
+
+  ---------------------------------
+
+  What this is: a free-form trip description goes in, an LLM returns a
+
+  structured JSON itinerary, and the app renders it as an interactive,
+
+  stateful set of day cards (expand, reorder, remove stops).
+
+  Why one file: this was built to be dropped anywhere and opened directly —
+
+  no build step, no npm install. React, Babel (JSX-in-browser) and fonts
+
+  load from CDNs; everything else is inline below.
+
+  Honest limitation (read before shipping this for real): the API key is
+
+  entered client-side and used directly from the browser. That's fine for
+
+  a local demo but is exactly what the original brief asks you NOT to do
+
+  in production — in a real deployment this fetch call belongs behind a
+
+  small backend/serverless function so the key never reaches the browser.
+
+  Swapping it out is a one-line change: point callModel() at your own
+
+  "/api/plan" endpoint instead of the provider URL below.
+
+  This version uses Google's Gemini API directly for local/demo use.
+
+  It defaults to Gemini 3.6 Flash. For production, put the Gemini call
+
+  behind a backend so the API key is never exposed in the browser.
+
+-->
+
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+<title>Trip Planner</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+
+<style>
+
+  :root {
+
+    --bg: #f5efe2;
+
+    --bg-raised: #fffdf8;
+
+    --ink: #1f2b26;
+
+    --ink-soft: #55645c;
+
+    --teal: #1f4b48;
+
+    --teal-soft: #dce7e3;
+
+    --gold: #c8912f;
+
+    --brick: #a8481f;
+
+    --brick-soft: #f2e0d3;
+
+    --line: #d8cfba;
+
+    --shadow: 0 1px 2px rgba(31,43,38,0.06), 0 6px 20px rgba(31,43,38,0.07);
+
+    --radius: 14px;
+
+    box-sizing: border-box;
+
+    padding-top: env(safe-area-inset-top, 0px);
+
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+
+  }
+
+  [data-theme="dark"] {
+
+    --bg: #12191a;
+
+    --bg-raised: #1a2324;
+
+    --ink: #ece6d8;
+
+    --ink-soft: #a6ada4;
+
+    --teal: #7fb8ae;
+
+    --teal-soft: #1f2e2c;
+
+    --gold: #e0b25c;
+
+    --brick: #e08657;
+
+    --brick-soft: #2c211a;
+
+    --line: #2c3838;
+
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+
+    margin: 0;
+
+    background: var(--bg);
+
+    color: var(--ink);
+
+    font-family: 'Inter', -apple-system, sans-serif;
+
+    -webkit-font-smoothing: antialiased;
+
+  }
+
+  #root { min-height: 100%; }
+
+  h1, h2, h3, .display { font-family: 'Fraunces', Georgia, serif; }
+
+  .shell {
+
+    max-width: 760px;
+
+    margin: 0 auto;
+
+    padding: 28px 20px 80px;
+
+  }
+
+  /* header */
+
+  .topbar {
+
+    display: flex;
+
+    align-items: baseline;
+
+    justify-content: space-between;
+
+    gap: 12px;
+
+    margin-bottom: 28px;
+
+  }
+
+  .brand { display: flex; flex-direction: column; gap: 2px; }
+
+  .brand .display { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+
+  .brand .tag { font-size: 13px; color: var(--ink-soft); }
+
+  .topbar-actions { display: flex; gap: 8px; align-items: center; }
+
+  .icon-btn {
+
+    border: 1px solid var(--line);
+
+    background: var(--bg-raised);
+
+    color: var(--ink);
+
+    border-radius: 999px;
+
+    width: 38px; height: 38px;
+
+    display: flex; align-items: center; justify-content: center;
+
+    cursor: pointer;
+
+    font-size: 16px;
+
+    transition: transform 0.15s ease, background 0.15s ease;
+
+  }
+
+  .icon-btn:hover { background: var(--teal-soft); }
+
+  .icon-btn:active { transform: scale(0.94); }
+
+  .icon-btn:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible {
+
+    outline: 2px solid var(--teal); outline-offset: 2px;
+
+  }
+
+  /* composer */
+
+  .composer {
+
+    background: var(--bg-raised);
+
+    border: 1px solid var(--line);
+
+    border-radius: var(--radius);
+
+    box-shadow: var(--shadow);
+
+    padding: 18px;
+
+  }
+
+  textarea {
+
+    width: 100%;
+
+    resize: vertical;
+
+    min-height: 84px;
+
+    border: none;
+
+    background: transparent;
+
+    color: var(--ink);
+
+    font-family: inherit;
+
+    font-size: 16px;
+
+    line-height: 1.5;
+
+    padding: 4px 2px 12px;
+
+  }
+
+  textarea::placeholder { color: var(--ink-soft); }
+
+  .composer-row {
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    gap: 10px;
+
+    border-top: 1px dashed var(--line);
+
+    padding-top: 12px;
+
+  }
+
+  .hint { font-size: 12.5px; color: var(--ink-soft); }
+
+  .btn {
+
+    border: none;
+
+    border-radius: 999px;
+
+    padding: 10px 20px;
+
+    font-family: inherit;
+
+    font-weight: 600;
+
+    font-size: 14.5px;
+
+    cursor: pointer;
+
+    background: var(--teal);
+
+    color: #fdfbf4;
+
+    transition: opacity 0.15s ease, transform 0.15s ease;
+
+  }
+
+  .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .btn:not(:disabled):active { transform: scale(0.97); }
+
+  .btn.secondary {
+
+    background: transparent;
+
+    color: var(--ink);
+
+    border: 1px solid var(--line);
+
+  }
+
+  .btn.ghost {
+
+    background: transparent;
+
+    color: var(--brick);
+
+    padding: 6px 10px;
+
+    font-size: 13px;
+
+  }
+
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+  .example-chip {
+
+    border: 1px solid var(--line);
+
+    background: var(--bg-raised);
+
+    color: var(--ink-soft);
+
+    border-radius: 999px;
+
+    padding: 7px 14px;
+
+    font-size: 13px;
+
+    cursor: pointer;
+
+  }
+
+  .example-chip:hover { border-color: var(--teal); color: var(--teal); }
+
+  /* settings panel */
+
+  .settings {
+
+    margin-top: 14px;
+
+    background: var(--bg-raised);
+
+    border: 1px solid var(--line);
+
+    border-radius: var(--radius);
+
+    padding: 16px 18px;
+
+    display: grid;
+
+    gap: 12px;
+
+    box-shadow: var(--shadow);
+
+  }
+
+  .field { display: grid; gap: 5px; }
+
+  .field label { font-size: 12.5px; color: var(--ink-soft); font-weight: 600; }
+
+  .field input, .field select {
+
+    border: 1px solid var(--line);
+
+    background: var(--bg);
+
+    color: var(--ink);
+
+    border-radius: 8px;
+
+    padding: 9px 10px;
+
+    font-family: inherit;
+
+    font-size: 14px;
+
+  }
+
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  @media (max-width: 520px) { .field-row { grid-template-columns: 1fr; } }
+
+  .settings-note { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
+
+  /* states */
+
+  .state-panel {
+
+    margin-top: 22px;
+
+    text-align: center;
+
+    padding: 40px 20px;
+
+    color: var(--ink-soft);
+
+  }
+
+  .state-panel .display { font-size: 19px; color: var(--ink); margin: 10px 0 6px; }
+
+  .state-panel p { font-size: 14px; line-height: 1.6; max-width: 44ch; margin: 0 auto; }
+
+  .spinner {
+
+    width: 30px; height: 30px; margin: 0 auto;
+
+    border-radius: 50%;
+
+    border: 3px solid var(--teal-soft);
+
+    border-top-color: var(--teal);
+
+    animation: spin 0.8s linear infinite;
+
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-panel {
+
+    margin-top: 22px;
+
+    background: var(--brick-soft);
+
+    border: 1px solid var(--brick);
+
+    border-radius: var(--radius);
+
+    padding: 20px;
+
+  }
+
+  .error-panel .display { font-size: 17px; margin: 0 0 6px; color: var(--brick); }
+
+  .error-panel p { font-size: 14px; color: var(--ink); line-height: 1.55; margin: 0 0 12px; }
+
+  .error-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  details.raw { margin-top: 10px; }
+
+  details.raw summary { font-size: 12.5px; color: var(--ink-soft); cursor: pointer; }
+
+  details.raw pre {
+
+    white-space: pre-wrap; word-break: break-word;
+
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+
+    padding: 10px; font-size: 12px; margin-top: 8px; max-height: 200px; overflow: auto;
+
+  }
+
+  /* itinerary */
+
+  .trip-head {
+
+    margin-top: 30px;
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: flex-start;
+
+    gap: 12px;
+
+  }
+
+  .trip-head h2 { font-size: 24px; margin: 0 0 4px; }
+
+  .trip-head .sub { font-size: 13.5px; color: var(--ink-soft); }
+
+  .trip-head-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+  .day-card {
+
+    margin-top: 16px;
+
+    background: var(--bg-raised);
+
+    border: 1px solid var(--line);
+
+    border-radius: var(--radius);
+
+    box-shadow: var(--shadow);
+
+    overflow: hidden;
+
+  }
+
+  .day-head {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 14px;
+
+    padding: 16px 18px;
+
+    cursor: pointer;
+
+    background: none;
+
+    border: none;
+
+    width: 100%;
+
+    text-align: left;
+
+    font-family: inherit;
+
+    color: var(--ink);
+
+  }
+
+  .day-num {
+
+    flex-shrink: 0;
+
+    width: 42px; height: 42px;
+
+    border-radius: 50%;
+
+    background: var(--teal);
+
+    color: #fdfbf4;
+
+    display: flex; align-items: center; justify-content: center;
+
+    font-family: 'Fraunces', serif;
+
+    font-size: 17px;
+
+    font-weight: 600;
+
+  }
+
+  .day-head-text { flex: 1; min-width: 0; }
+
+  .day-head-text .theme { font-weight: 600; font-size: 15.5px; }
+
+  .day-head-text .count { font-size: 12.5px; color: var(--ink-soft); margin-top: 1px; }
+
+  .chevron { transition: transform 0.2s ease; color: var(--ink-soft); flex-shrink: 0; }
+
+  .chevron.open { transform: rotate(180deg); }
+
+  .stop-list {
+
+    border-top: 1px dashed var(--line);
+
+    padding: 6px 12px 14px;
+
+  }
+
+  .stop {
+
+    display: flex;
+
+    gap: 12px;
+
+    padding: 12px 6px;
+
+    border-bottom: 1px solid var(--line);
+
+  }
+
+  .stop:last-child { border-bottom: none; }
+
+  .stop-time {
+
+    flex-shrink: 0;
+
+    width: 68px;
+
+    font-size: 12.5px;
+
+    color: var(--ink-soft);
+
+    padding-top: 2px;
+
+    font-variant-numeric: tabular-nums;
+
+  }
+
+  .stop-main { flex: 1; min-width: 0; }
+
+  .stop-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  .stop-name { font-weight: 600; font-size: 14.5px; }
+
+  .pill {
+
+    font-size: 10.5px;
+
+    padding: 2px 8px;
+
+    border-radius: 999px;
+
+    background: var(--teal-soft);
+
+    color: var(--teal);
+
+    font-weight: 600;
+
+  }
+
+  .pill.food { background: var(--brick-soft); color: var(--brick); }
+
+  .pill.transport { background: var(--line); color: var(--ink-soft); }
+
+  .stop-desc { font-size: 13.5px; color: var(--ink-soft); margin-top: 4px; line-height: 1.5; }
+
+  .stop-actions { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+
+  .mini-btn {
+
+    border: 1px solid var(--line);
+
+    background: var(--bg);
+
+    color: var(--ink-soft);
+
+    width: 26px; height: 26px;
+
+    border-radius: 7px;
+
+    display: flex; align-items: center; justify-content: center;
+
+    cursor: pointer;
+
+    font-size: 12px;
+
+    line-height: 1;
+
+  }
+
+  .mini-btn:hover { color: var(--ink); border-color: var(--teal); }
+
+  .mini-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .mini-btn.remove:hover { color: var(--brick); border-color: var(--brick); }
+
+  .footer-note {
+
+    text-align: center;
+
+    font-size: 12px;
+
+    color: var(--ink-soft);
+
+    margin-top: 40px;
+
+  }
+
+  @media (max-width: 480px) {
+
+    .shell { padding: 18px 14px 60px; }
+
+    .brand .display { font-size: 22px; }
+
+    .stop { flex-wrap: wrap; }
+
+    .stop-time { width: auto; }
+
+  }
+
+</style>
+
+</head>
+
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+
+const { useState, useEffect, useRef, useCallback } = React;
+
+const STORAGE_KEY = "trip-planner:session:v1";
+
+const SETTINGS_KEY = "trip-planner:settings:v2-gemini";
+
+const REQUEST_TIMEOUT_MS = 45000;
+
+const EXAMPLES = [
+
+  "5 days in Lisbon, slow travel, lots of food and viewpoints",
+
+  "Weekend in Kyoto, temples + one day trip, budget-friendly",
+
+  "7-day road trip through New Zealand's South Island, hiking focus",
+
+];
+
+const SYSTEM_PROMPT = `You are a travel planning assistant embedded in an app. Given a free-form trip description, respond with ONLY a raw JSON object — no markdown fences, no commentary — matching exactly this shape:
+
+{
+
+  "title": string,               // short trip title, e.g. "Lisbon, Slow & Scenic"
+
+  "destination": string,
+
+  "days": [
+
+    {
+
+      "day": number,             // 1-indexed
+
+      "theme": string,           // short theme, e.g. "Old Town & Riverfront"
+
+      "stops": [
+
+        {
+
+          "id": string,          // unique short id, e.g. "d1s1"
+
+          "time": string,        // e.g. "9:00 AM" or "Morning"
+
+          "name": string,
+
+          "type": "sight" | "food" | "activity" | "transport" | "rest",
+
+          "description": string // 1-2 concrete sentences, specific to the place
+
+        }
+
+      ]
+
+    }
+
+  ]
+
+}
+
+Rules: infer the number of days from the request (default 3 if unclear). 3 to 6 stops per day. Be concrete and specific to the actual destination, never generic filler. Output raw JSON only.`;
+
+function safeUUID() {
+
+  return Math.random().toString(36).slice(2, 9);
+
+}
+
+// ---- validation: don't trust the model's shape ----
+
+function validateItinerary(data) {
+
+  if (!data || typeof data !== "object") return "Response wasn't a JSON object.";
+
+  if (typeof data.title !== "string" || !data.title.trim()) return "Missing a trip title.";
+
+  if (!Array.isArray(data.days) || data.days.length === 0) return "No days were returned.";
+
+  for (const day of data.days) {
+
+    if (typeof day.day !== "number") return "A day is missing its day number.";
+
+    if (!Array.isArray(day.stops) || day.stops.length === 0) return `Day ${day.day} has no stops.`;
+
+    for (const stop of day.stops) {
+
+      if (typeof stop.name !== "string" || !stop.name.trim()) return `Day ${day.day} has a stop with no name.`;
+
+    }
+
+  }
+
+  return null;
+
+}
+
+// fill in anything missing/malformed at the field level rather than
+
+// rejecting a mostly-good response outright
+
+function normalizeItinerary(data) {
+
+  return {
+
+    title: data.title.trim(),
+
+    destination: typeof data.destination === "string" ? data.destination : "",
+
+    days: data.days.map((day, di) => ({
+
+      day: typeof day.day === "number" ? day.day : di + 1,
+
+      theme: typeof day.theme === "string" && day.theme.trim() ? day.theme : `Day ${di + 1}`,
+
+      stops: day.stops.map((s, si) => ({
+
+        id: typeof s.id === "string" && s.id ? s.id : `d${di + 1}s${si + 1}-${safeUUID()}`,
+
+        time: typeof s.time === "string" ? s.time : "",
+
+        name: s.name.trim(),
+
+        type: ["sight", "food", "activity", "transport", "rest"].includes(s.type) ? s.type : "activity",
+
+        description: typeof s.description === "string" ? s.description : "",
+
+      })),
+
+    })),
+
+  };
+
+}
+
+function extractJson(raw) {
+
+  // models sometimes wrap JSON in ```json fences or add stray prose; try the
+
+  // straightforward parse first, then fall back to grabbing the outermost braces
+
+  try { return JSON.parse(raw); } catch (e) {}
+
+  const match = raw.match(/**\{**[\s\S]***\}**/);
+
+  if (match) {
+
+    try { return JSON.parse(match[0]); } catch (e) {}
+
+  }
+
+  return null;
+
+}
+
+async function callModel({ apiKey, model, prompt, signal }) {
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    signal,
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: SYSTEM_PROMPT }],
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: prompt }],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: "application/json",
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const errorData = await res.json();
+      detail =
+        errorData?.error?.message ||
+        errorData?.message ||
+        "";
+    } catch (e) {}
+
+    throw new Error(detail || `Gemini request failed (${res.status}).`);
+  }
+
+  const data = await res.json();
+
+  if (data?.promptFeedback?.blockReason) {
+    throw new Error(`Gemini blocked the request: ${data.promptFeedback.blockReason}`);
+  }
+
+  const content = (data?.candidates?.[0]?.content?.parts || [])
+    .map((part) => part?.text || "")
+    .join("")
+    .trim();
+
+  if (!content) throw new Error("EMPTY_RESPONSE");
+
+  return content;
+}
+
+function Icon({ name }) {
+
+  const paths = {
+
+    settings: "M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7ZM19.4 13a7.4 7.4 0 0 0 .06-1 7.4 7.4 0 0 0-.06-1l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L14.9 3h-4l-.4 2.4a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.4 11a7.4 7.4 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.4h4l.4-2.4a7.6 7.6 0 0 0 1.7-1l2.5 1 2-3.5L19.4 13Z",
+
+    moon: "M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z",
+
+    sun: "M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4 4.2 19.8M19.8 4.2l-1.4 1.4M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z",
+
+    chevron: "M6 9l6 6 6-6",
+
+    up: "M12 19V5M5 12l7-7 7 7",
+
+    down: "M12 5v14M19 12l-7 7-7-7",
+
+    close: "M6 6l12 12M18 6 6 18",
+
+  };
+
+  return (
+
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+
+      <path d={paths[name]} />
+
+    </svg>
+
+  );
+
+}
+
+function EmptyState({ onPick }) {
+
+  return (
+
+    <div className="state-panel">
+
+      <div className="display">Where to?</div>
+
+      <p>Describe a trip — destination, length, pace, interests — and get a day-by-day plan you can rearrange to fit.</p>
+
+      <div className="examples">
+
+        {EXAMPLES.map((ex) => (
+
+          <button key={ex} className="example-chip" onClick={() => onPick(ex)}>{ex}</button>
+
+        ))}
+
+      </div>
+
+    </div>
+
+  );
+
+}
+
+function LoadingState() {
+
+  return (
+
+    <div className="state-panel">
+
+      <div className="spinner" />
+
+      <div className="display">Planning your trip…</div>
+
+      <p>Usually takes a few seconds. If the model stalls, this will time out on its own and let you retry.</p>
+
+    </div>
+
+  );
+
+}
+
+function ErrorState({ message, rawText, onRetry, onEdit }) {
+
+  return (
+
+    <div className="error-panel">
+
+      <div className="display">That didn't come back right</div>
+
+      <p>{message}</p>
+
+      <div className="error-actions">
+
+        <button className="btn secondary" onClick={onRetry}>Try again</button>
+
+        <button className="btn ghost" onClick={onEdit}>Edit prompt</button>
+
+      </div>
+
+      {rawText ? (
+
+        <details className="raw">
+
+          <summary>Show raw model output</summary>
+
+          <pre>{rawText}</pre>
+
+        </details>
+
+      ) : null}
+
+    </div>
+
+  );
+
+}
+
+function Stop({ stop, index, total, onRemove, onMove }) {
+
+  return (
+
+    <div className="stop">
+
+      <div className="stop-time">{stop.time}</div>
+
+      <div className="stop-main">
+
+        <div className="stop-name-row">
+
+          <span className="stop-name">{stop.name}</span>
+
+          <span className={`pill ${stop.type}`}>{stop.type}</span>
+
+        </div>
+
+        {stop.description ? <div className="stop-desc">{stop.description}</div> : null}
+
+      </div>
+
+      <div className="stop-actions">
+
+        <button className="mini-btn" aria-label="Move up" disabled={index === 0} onClick={() => onMove(index, -1)}><Icon name="up" /></button>
+
+        <button className="mini-btn" aria-label="Move down" disabled={index === total - 1} onClick={() => onMove(index, 1)}><Icon name="down" /></button>
+
+        <button className="mini-btn remove" aria-label="Remove stop" onClick={() => onRemove(index)}><Icon name="close" /></button>
+
+      </div>
+
+    </div>
+
+  );
+
+}
+
+function DayCard({ day, dayIndex, defaultOpen, onRemoveStop, onMoveStop }) {
+
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+
+    <div className="day-card">
+
+      <button className="day-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+
+        <div className="day-num">{day.day}</div>
+
+        <div className="day-head-text">
+
+          <div className="theme">{day.theme}</div>
+
+          <div className="count">{day.stops.length} stop{day.stops.length === 1 ? "" : "s"}</div>
+
+        </div>
+
+        <span className={`chevron ${open ? "open" : ""}`}><Icon name="chevron" /></span>
+
+      </button>
+
+      {open ? (
+
+        <div className="stop-list">
+
+          {day.stops.length === 0 ? (
+
+            <p style={{ color: "var(--ink-soft)", fontSize: 13.5, padding: "10px 6px" }}>
+
+              No stops left for this day.
+
+            </p>
+
+          ) : (
+
+            day.stops.map((stop, i) => (
+
+              <Stop
+
+                key={stop.id}
+
+                stop={stop}
+
+                index={i}
+
+                total={day.stops.length}
+
+                onRemove={(idx) => onRemoveStop(dayIndex, idx)}
+
+                onMove={(idx, dir) => onMoveStop(dayIndex, idx, dir)}
+
+              />
+
+            ))
+
+          )}
+
+        </div>
+
+      ) : null}
+
+    </div>
+
+  );
+
+}
+
+function SettingsPanel({ settings, onChange, onClose }) {
+  return (
+    <div className="settings">
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor="apiKey">Gemini API key</label>
+          <input
+            id="apiKey"
+            type="password"
+            placeholder="Paste your Gemini API key"
+            value={settings.apiKey}
+            onChange={(e) => onChange({ ...settings, apiKey: e.target.value })}
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="model">Gemini model</label>
+          <input
+            id="model"
+            type="text"
+            value={settings.model}
+            onChange={(e) => onChange({ ...settings, model: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <p className="settings-note">
+        This app calls Google's Gemini API directly. The API key is stored in
+        this browser's localStorage and is sent only to Google's Gemini API
+        endpoint. This is suitable for a local/demo app. For a real public
+        deployment, move the Gemini call behind a backend so the key never
+        reaches the browser.
+      </p>
+
+      <div>
+        <button className="btn secondary" onClick={onClose}>Done</button>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+
+  const [prompt, setPrompt] = useState("");
+
+  const [status, setStatus] = useState("idle"); // idle | loading | error | success
+
+  const [itinerary, setItinerary] = useState(null);
+
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const [rawText, setRawText] = useState("");
+
+  const [showSettings, setShowSettings] = useState(false);
+
+  const [dark, setDark] = useState(false);
+
+  const [settings, setSettings] = useState({
+    apiKey: "",
+    model: "gemini-3.8-flash",
+  });
+
+  const requestIdRef = useRef(0);
+
+  const abortRef = useRef(null);
+
+  // load persisted session + settings + theme once
+
+  useEffect(() => {
+
+    try {
+
+      const savedSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+
+      if (savedSettings) setSettings((s) => ({ ...s, ...savedSettings }));
+
+      const savedSession = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+
+      if (savedSession?.itinerary) {
+
+        setItinerary(savedSession.itinerary);
+
+        setPrompt(savedSession.prompt || "");
+
+        setStatus("success");
+
+      }
+
+      const savedTheme = localStorage.getItem("trip-planner:theme");
+
+      if (savedTheme === "dark") setDark(true);
+
+    } catch (e) { /* corrupted storage — ignore, start fresh */ }
+
+  }, []);
+
+  useEffect(() => {
+
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+
+    localStorage.setItem("trip-planner:theme", dark ? "dark" : "light");
+
+  }, [dark]);
+
+  useEffect(() => {
+
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+
+  }, [settings]);
+
+  const persistSession = useCallback((nextItinerary, nextPrompt) => {
+
+    try {
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ itinerary: nextItinerary, prompt: nextPrompt }));
+
+    } catch (e) { /* storage full/unavailable — non-fatal */ }
+
+  }, []);
+
+  const runGeneration = useCallback(async (text) => {
+
+    if (!text.trim()) return;
+
+    if (!settings.apiKey.trim()) {
+
+      setShowSettings(true);
+
+      setStatus("error");
+
+      setErrorMsg("Add an API key in settings first — nothing gets sent without one.");
+
+      setRawText("");
+
+      return;
+
+    }
+
+    const myRequestId = ++requestIdRef.current;
+
+    if (abortRef.current) abortRef.current.abort();
+
+    const controller = new AbortController();
+
+    abortRef.current = controller;
+
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    setStatus("loading");
+
+    setErrorMsg("");
+
+    setRawText("");
+
+    try {
+
+      const content = await callModel({
+
+        apiKey: settings.apiKey,
+
+        baseUrl: settings.baseUrl,
+
+        model: settings.model,
+
+        prompt: text,
+
+        signal: controller.signal,
+
+      });
+
+      // a newer request has since started — drop this stale result entirely
+
+      if (myRequestId !== requestIdRef.current) return;
+
+      const parsed = extractJson(content);
+
+      if (!parsed) {
+
+        setStatus("error");
+
+        setErrorMsg("The model's response wasn't valid JSON.");
+
+        setRawText(content);
+
+        return;
+
+      }
+
+      const shapeError = validateItinerary(parsed);
+
+      if (shapeError) {
+
+        setStatus("error");
+
+        setErrorMsg(`The response didn't match the expected format: ${shapeError}`);
+
+        setRawText(JSON.stringify(parsed, null, 2));
+
+        return;
+
+      }
+
+      const normalized = normalizeItinerary(parsed);
+
+      setItinerary(normalized);
+
+      setStatus("success");
+
+      persistSession(normalized, text);
+
+    } catch (err) {
+
+      if (myRequestId !== requestIdRef.current) return; // superseded — ignore
+
+      setStatus("error");
+
+      if (err.name === "AbortError") {
+
+        setErrorMsg("The request timed out. The model may be slow or unreachable right now.");
+
+      } else if (err.message === "EMPTY_RESPONSE") {
+
+        setErrorMsg("The model returned an empty response.");
+
+      } else {
+
+        setErrorMsg(err.message || "Something went wrong calling the model.");
+
+      }
+
+      setRawText("");
+
+    } finally {
+
+      clearTimeout(timeout);
+
+    }
+
+  }, [settings, persistSession]);
+
+  const handleRemoveStop = (dayIndex, stopIndex) => {
+
+    setItinerary((prev) => {
+
+      const next = structuredClone(prev);
+
+      next.days[dayIndex].stops.splice(stopIndex, 1);
+
+      persistSession(next, prompt);
+
+      return next;
+
+    });
+
+  };
+
+  const handleMoveStop = (dayIndex, stopIndex, dir) => {
+
+    setItinerary((prev) => {
+
+      const next = structuredClone(prev);
+
+      const stops = next.days[dayIndex].stops;
+
+      const target = stopIndex + dir;
+
+      if (target < 0 || target >= stops.length) return prev;
+
+      [stops[stopIndex], stops[target]] = [stops[target], stops[stopIndex]];
+
+      persistSession(next, prompt);
+
+      return next;
+
+    });
+
+  };
+
+  const handleStartOver = () => {
+
+    setItinerary(null);
+
+    setStatus("idle");
+
+    setPrompt("");
+
+    setErrorMsg("");
+
+    localStorage.removeItem(STORAGE_KEY);
+
+  };
+
+  return (
+
+    <div className="shell">
+
+      <header className="topbar">
+
+        <div className="brand">
+
+          <div className="display">Trip Planner</div>
+
+          <div className="tag">Describe a trip. Get a plan you can actually rearrange.</div>
+
+        </div>
+
+        <div className="topbar-actions">
+
+          <button className="icon-btn" aria-label="Toggle theme" onClick={() => setDark((d) => !d)}>
+
+            <Icon name={dark ? "sun" : "moon"} />
+
+          </button>
+
+          <button className="icon-btn" aria-label="Settings" onClick={() => setShowSettings((s) => !s)}>
+
+            <Icon name="settings" />
+
+          </button>
+
+        </div>
+
+      </header>
+
+      {showSettings && (
+
+        <SettingsPanel settings={settings} onChange={setSettings} onClose={() => setShowSettings(false)} />
+
+      )}
+
+      <div className="composer">
+
+        <textarea
+
+          placeholder="e.g. 4 days in Mexico City, food-focused, one day trip to Teotihuacan…"
+
+          value={prompt}
+
+          onChange={(e) => setPrompt(e.target.value)}
+
+        />
+
+        <div className="composer-row">
+
+          <span className="hint">{status === "loading" ? "Generating…" : "Free-form — as much or as little detail as you like."}</span>
+
+          <button className="btn" disabled={status === "loading" || !prompt.trim()} onClick={() => runGeneration(prompt)}>
+
+            {itinerary ? "Regenerate" : "Plan trip"}
+
+          </button>
+
+        </div>
+
+      </div>
+
+      {status === "idle" && !itinerary && <EmptyState onPick={(ex) => setPrompt(ex)} />}
+
+      {status === "loading" && <LoadingState />}
+
+      {status === "error" && (
+
+        <ErrorState
+
+          message={errorMsg}
+
+          rawText={rawText}
+
+          onRetry={() => runGeneration(prompt)}
+
+          onEdit={() => setStatus(itinerary ? "success" : "idle")}
+
+        />
+
+      )}
+
+      {itinerary && status !== "loading" && (
+
+        <React.Fragment>
+
+          <div className="trip-head">
+
+            <div>
+
+              <h2>{itinerary.title}</h2>
+
+              {itinerary.destination ? <div className="sub">{itinerary.destination}</div> : null}
+
+            </div>
+
+            <div className="trip-head-actions">
+
+              <button className="btn ghost" onClick={handleStartOver}>Start over</button>
+
+            </div>
+
+          </div>
+
+          {itinerary.days.map((day, i) => (
+
+            <DayCard
+
+              key={day.day}
+
+              day={day}
+
+              dayIndex={i}
+
+              defaultOpen={i === 0}
+
+              onRemoveStop={handleRemoveStop}
+
+              onMoveStop={handleMoveStop}
+
+            />
+
+          ))}
+
+        </React.Fragment>
+
+      )}
+
+      <div className="footer-note">Saved locally in this browser — reload the page and your last plan is still here.</div>
+
+    </div>
+
+  );
+
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+
+</body>
+
+</html>
